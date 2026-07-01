@@ -12,6 +12,18 @@ The detection pipeline operates in three stages:
 
 The four attack types monitored are: **File Leak**, **Malicious Code Write**, **IP Exposure**, and **Remote Shell Access**.
 
+## Dataset
+
+The full dataset consists of two parts:
+
+**Part 1 — MalHug Dataset** (publicly available):
+> [https://zenodo.org/records/13850049](https://zenodo.org/records/13850049)
+
+A collection of real-world HuggingFace model artifacts, used as the foundation for both benign model training and attack embedding.
+
+**Part 2 — Advanced TensorAbuse Synthetic Dataset** (constructed by us):
+> [https://osf.io/qj26u/overview?view_only=143a10df404b4c289781caa4aafdc83a](https://osf.io/qj26u/overview?view_only=143a10df404b4c289781caa4aafdc83a)
+
 ## Directory Structure
 
 ```
