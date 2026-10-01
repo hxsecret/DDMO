@@ -119,6 +119,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
+from bert_embedder import BertSyscallVectorizer
+
 class DirectDataset(Dataset):
     def __init__(self, data, vectorizer):
         self.data = data
@@ -128,10 +130,9 @@ class DirectDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # Category (1) is a single event, transform directly
-        event = self.data[idx][0] # data is a list like [[event1], [event2], ...]
-        sys_t, arg_t = self.vectorizer.transform_direct(event)
-        return sys_t, arg_t
+        # Category (1) is a single event, embed via BERT -> (embed_dim,)
+        event = self.data[idx][0]
+        return self.vectorizer.transform_direct(event)
 
 class SequenceDataset(Dataset):
     def __init__(self, data, vectorizer):
@@ -142,69 +143,22 @@ class SequenceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # Category (2) is an event sequence
+        # Category (2) is an event sequence, embed via BERT -> (seq_len, embed_dim)
         sequence = self.data[idx]
-        sys_t, arg_t = self.vectorizer.transform_sequence(sequence)
-        return sys_t, arg_t
+        return self.vectorizer.transform_sequence(sequence)
 
 def sequence_collate_fn(batch):
-    syscall_tensors = [item[0] for item in batch]
-    arg_tensors = [item[1] for item in batch]
-    
-    # pad sequences of varying lengths within a batch with 0 to align to max length
-    syscalls_padded = pad_sequence(syscall_tensors, batch_first=True, padding_value=0)
-    # arg tensor is 2D (seq_len, feature_dim), also pad with 0.0
-    args_padded = pad_sequence(arg_tensors, batch_first=True, padding_value=0.0)
-    
-    return syscalls_padded, args_padded
-    
+    # batch: list of (seq_len, embed_dim) tensors
+    return pad_sequence(batch, batch_first=True, padding_value=0.0)
+
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import LabelEncoder
-
-class DualSyscallVectorizer:
-    def __init__(self, max_features=128):
-        self.syscall_encoder = LabelEncoder()
-        # character-level N-gram to extract argument features
-        self.arg_vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 4), max_features=max_features)
-        self.is_fitted = False
-
-    def fit(self, all_events):
-        """
-        Pass in all normal training data (whether single events or items within sequences) to fit.
-        """
-        syscalls = [e['syscall'] for e in all_events]
-        args = [e['args'] for e in all_events]
-        
-        self.syscall_encoder.fit(syscalls)
-        self.arg_vectorizer.fit(args)
-        self.is_fitted = True
-        self.num_syscalls = len(self.syscall_encoder.classes_)
-
-    def transform_direct(self, event):
-        """Process (1) single call, return 1D Tensor"""
-        syscall_id = self.syscall_encoder.transform([event['syscall']])[0] if event['syscall'] in self.syscall_encoder.classes_ else 0
-        arg_vec = self.arg_vectorizer.transform([event['args']]).toarray()[0]
-        
-        return torch.tensor([syscall_id], dtype=torch.long), torch.tensor(arg_vec, dtype=torch.float32)
-
-    def transform_sequence(self, sequence):
-        """Process (2) sequence call, return 2D Tensor (seq_len, feature_dim)"""
-        syscall_ids = [self.syscall_encoder.transform([e['syscall']])[0] if e['syscall'] in self.syscall_encoder.classes_ else 0 for e in sequence]
-        arg_vecs = self.arg_vectorizer.transform([e['args'] for e in sequence]).toarray()
-        
-        return torch.tensor(syscall_ids, dtype=torch.long), torch.tensor(arg_vecs, dtype=torch.float32)
-    
 import torch.nn as nn
 
 # ---------------- Model (1): MLP Autoencoder for Direct Syscall ----------------
 class DirectAutoencoder(nn.Module):
-    def __init__(self, num_syscalls, arg_dim, embed_dim=16, hidden_dim=32):
+    def __init__(self, input_dim=128, hidden_dim=64):
         super().__init__()
-        self.embed = nn.Embedding(num_syscalls + 1, embed_dim, padding_idx=0)
-        input_dim = embed_dim + arg_dim
-        
-        # simple encoder -> bottleneck -> decoder
+        self.input_dim = input_dim
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -216,35 +170,27 @@ class DirectAutoencoder(nn.Module):
             nn.Linear(hidden_dim, input_dim)
         )
 
-    def forward(self, syscall_idx, arg_vec):
-        emb = self.embed(syscall_idx) # (batch, embed_dim)
-        if emb.dim() == 3:
-            emb = emb.squeeze(1)
-        x = torch.cat([emb, arg_vec], dim=-1) # (batch, input_dim)
+    def forward(self, x):
+        # x: (batch, input_dim)
         encoded = self.encoder(x)
         reconstructed = self.decoder(encoded)
         return reconstructed, x
 
 # ---------------- Model (2): LSTM Autoencoder for Sequence ----------------
 class SequenceAutoencoder(nn.Module):
-    def __init__(self, num_syscalls, arg_dim, embed_dim=16, hidden_dim=64):
+    def __init__(self, input_dim=128, hidden_dim=128):
         super().__init__()
-        self.embed = nn.Embedding(num_syscalls + 1, embed_dim, padding_idx=0)
-        input_dim = embed_dim + arg_dim
-        
+        self.input_dim = input_dim
         self.encoder = nn.LSTM(input_dim, hidden_dim, batch_first=True)
         self.decoder = nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
         self.rebuild_layer = nn.Linear(hidden_dim, input_dim)
 
-    def forward(self, syscall_idx, arg_vec):
-        emb = self.embed(syscall_idx) # (batch, seq, embed_dim)
-        x = torch.cat([emb, arg_vec], dim=-1) # (batch, seq, input_dim)
-        
+    def forward(self, x):
+        # x: (batch, seq, input_dim)
         _, (hidden, cell) = self.encoder(x)
         seq_len = x.size(1)
         decoder_input = hidden[-1].unsqueeze(1).repeat(1, seq_len, 1)
         decoder_output, _ = self.decoder(decoder_input, (hidden, cell))
-        
         reconstructed = self.rebuild_layer(decoder_output)
         return reconstructed, x
     
@@ -252,7 +198,7 @@ import torch.optim as optim
 
 def train_and_calibrate(model, data_loader, is_sequence=False, epochs=10, device='cpu'):
     """
-    Train the model and automatically compute anomaly detection threshold using 3-Sigma rule.
+    Train the model and automatically compute anomaly detection threshold.
     """
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -261,11 +207,10 @@ def train_and_calibrate(model, data_loader, is_sequence=False, epochs=10, device
     # 1. Training phase
     for epoch in range(epochs):
         total_loss = 0
-        for syscall_batch, arg_batch in data_loader:
-            syscall_batch = syscall_batch.to(device)
-            arg_batch = arg_batch.to(device)
+        for batch in data_loader:
+            batch = batch.to(device)
             optimizer.zero_grad()
-            reconstructed, original = model(syscall_batch, arg_batch)
+            reconstructed, original = model(batch)
             loss = criterion(reconstructed, original).mean()
             loss.backward()
             optimizer.step()
@@ -276,28 +221,23 @@ def train_and_calibrate(model, data_loader, is_sequence=False, epochs=10, device
     model.eval()
     all_losses = []
     with torch.no_grad():
-        for syscall_batch, arg_batch in data_loader:
-            syscall_batch = syscall_batch.to(device)
-            arg_batch = arg_batch.to(device)
-            reconstructed, original = model(syscall_batch, arg_batch)
-            # compute MSE per sample
+        for batch in data_loader:
+            batch = batch.to(device)
+            reconstructed, original = model(batch)
             if is_sequence:
-                # average over sequence dimensions: shape (batch_size, seq_len, feature_dim) -> (batch_size,)
                 sample_losses = criterion(reconstructed, original).mean(dim=[1, 2])
             else:
-                # average over single feature dimensions: shape (batch_size, feature_dim) -> (batch_size,)
                 sample_losses = criterion(reconstructed, original).mean(dim=1)
-                
             all_losses.extend(sample_losses.tolist())
             
-    # compute mean and standard deviation
     mu = np.mean(all_losses)
     sigma = np.std(all_losses)
-    # threshold = mu + 3 * sigma 
-    threshold = np.percentile(all_losses, 99.9) 
+    threshold = np.percentile(all_losses, 99.9)
 
     print(f"Calibration complete! mu={mu:.8f}, sigma={sigma:.8f}, recommended threshold tau={threshold:.8f}")
     return model, threshold
+
+BERT_MODEL_PATH = "./bert-log-pretrained-128d-with-nsp"
 
 def build_and_train_pipeline():
     # ==========================================
@@ -308,12 +248,11 @@ def build_and_train_pipeline():
     
     direct_data = []   # store category (1)
     sequence_data = [] # store category (2)
-    all_events = []    # store all events for fitting Vectorizer
+    all_events = []    # store all events for reference
     
     print(">>> Stage 1: Reading and clustering logs...")
     for i in range(10):
         filepath = f"../data/data{i}/filtered.log"
-        # filepath = "test.log" 
         if not os.path.exists(filepath):
             continue
             
@@ -323,7 +262,6 @@ def build_and_train_pipeline():
                 event = parser.parse_line(line)
                 if event:
                     all_events.append(event)
-                    # feed to state machine for clustering
                     cluster_result = cluster.process_event(event)
                     if cluster_result:
                         action_type, events = cluster_result
@@ -333,25 +271,18 @@ def build_and_train_pipeline():
                             sequence_data.append(events)
                             
     print(f"Data extraction complete: found {len(direct_data)} direct calls, {len(sequence_data)} behavior sequences.")
-    print(direct_data[:5]) # print first two direct call examples
-    print(sequence_data[:2]) # print first two sequence call examples
 
     # ==========================================
-    # Stage 2: Feature Engineering
+    # Stage 2: Feature Engineering (BERT embedding)
     # ==========================================
-    print("\n>>> Stage 2: Fitting feature vectorizer...")
-    # For million-level logs, limiting TF-IDF vocabulary to 256 balances speed and accuracy
-    vectorizer = DualSyscallVectorizer(max_features=256)
-    vectorizer.fit(all_events)
-    num_syscalls = vectorizer.num_syscalls
-    print(f"Vectorizer ready, syscall vocabulary size: {num_syscalls}")
+    print("\n>>> Stage 2: Loading BERT syscall embedder...")
+    vectorizer = BertSyscallVectorizer(model_path=BERT_MODEL_PATH)
+    embed_dim = vectorizer.embed_dim
+    print(f"BERT embedder ready, embedding dim: {embed_dim}")
 
-    # Build DataLoaders
-    # Category 1: Direct DataLoader
     direct_dataset = DirectDataset(direct_data, vectorizer)
     direct_loader = DataLoader(direct_dataset, batch_size=512, shuffle=True)
     
-    # Category 2: Sequence DataLoader (must pass custom collate_fn)
     seq_dataset = SequenceDataset(sequence_data, vectorizer)
     seq_loader = DataLoader(seq_dataset, batch_size=128, shuffle=True, collate_fn=sequence_collate_fn)
 
@@ -359,26 +290,9 @@ def build_and_train_pipeline():
     # Stage 3: Model Initialization & Hyperparameters
     # ==========================================
     print("\n>>> Stage 3: Initializing Autoencoder models...")
-    # Hyperparameter rationale:
-    # 1. args_dim matches max_features=256
-    # 2. embed_dim=32 is sufficient to encode a few hundred syscalls
-    # 3. seq_model hidden_dim=128, because sequences involve temporal complexity and need larger capacity
-    
-    direct_model = DirectAutoencoder(
-        num_syscalls=num_syscalls, 
-        arg_dim=256, 
-        embed_dim=32, 
-        hidden_dim=64
-    )
-    
-    seq_model = SequenceAutoencoder(
-        num_syscalls=num_syscalls, 
-        arg_dim=256, 
-        embed_dim=32, 
-        hidden_dim=128
-    )
+    direct_model = DirectAutoencoder(input_dim=embed_dim, hidden_dim=64)
+    seq_model = SequenceAutoencoder(input_dim=embed_dim, hidden_dim=128)
 
-    # Move to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     direct_model.to(device)
     seq_model.to(device)
@@ -419,9 +333,11 @@ def train():
         f.write("\nSequence Model Threshold:\n")
         f.write(str(t_s))
     print(f"Model thresholds saved to: {t_path}")
+    # store only thresholds + the BERT model path (the BERT model itself is
+    # loaded from disk, not pickled)
     with open("./vectorizer_and_thresholds.pkl", "wb") as f:
         pickle.dump({
-            'vectorizer': vectorizer,
+            'model_path': BERT_MODEL_PATH,
             'tau_direct': t_d,
             'tau_seq': t_s
         }, f)
@@ -432,27 +348,23 @@ def run_detection(log_file, result_file):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Using device: {device}")
 
-    # 1. Load feature extractor and thresholds
-    print("[*] Loading Vectorizer and detection thresholds...")
+    # 1. Load feature extractor config and thresholds
+    print("[*] Loading config and detection thresholds...")
     with open("./vectorizer_and_thresholds.pkl", "rb") as f:
         saved_data = pickle.load(f)
-        vectorizer = saved_data['vectorizer']
+        model_path = saved_data.get('model_path', BERT_MODEL_PATH)
         tau_direct = saved_data['tau_direct']
         tau_seq = saved_data['tau_seq']
-    tau_seq = tau_seq*2
-    tau_direct = 0.0015
-    print(tau_direct, tau_seq)
+    vec = BertSyscallVectorizer(model_path=model_path, device=device)
+    embed_dim = vec.embed_dim
+    print(f"[*] BERT embedding dim: {embed_dim}, thresholds: direct={tau_direct:.6f} seq={tau_seq:.6f}")
+
     # 2. Initialize and load model weights
     print("[*] Loading model weights...")
-    num_syscalls = vectorizer.num_syscalls
-    
-    # Note: hyperparameters here must be identical to those used during training
-    d_model = DirectAutoencoder(num_syscalls=num_syscalls, arg_dim=256, embed_dim=32, hidden_dim=64)
-    s_model = SequenceAutoencoder(num_syscalls=num_syscalls, arg_dim=256, embed_dim=32, hidden_dim=128)
-    
+    d_model = DirectAutoencoder(input_dim=embed_dim, hidden_dim=64)
+    s_model = SequenceAutoencoder(input_dim=embed_dim, hidden_dim=128)
     d_model.load_state_dict(torch.load("./syscall_ae_model", map_location=device))
     s_model.load_state_dict(torch.load("./sequence_ae_model", map_location=device))
-    
     d_model.to(device).eval()
     s_model.to(device).eval()
 
@@ -461,7 +373,6 @@ def run_detection(log_file, result_file):
     parser = SyscallParser()
     cluster = SyscallCluster()
     events_to_check = []
-    
     with open(log_file, 'r') as f:
         for line in f:
             event = parser.parse_line(line)
@@ -470,36 +381,24 @@ def run_detection(log_file, result_file):
                 if cluster_result:
                     events_to_check.append(cluster_result)
     print(f"[*] Parsing complete! Extracted {len(events_to_check)} events/sequences to check.")
+
     # 4. Run classification and anomaly logging
     print("[*] Running anomaly detection...")
     criterion = nn.MSELoss(reduction='mean')
     anomaly_count = 0
-    
     with open(result_file, 'w', encoding='utf-8') as out_f, torch.no_grad():
         for action_type, events in events_to_check:
-            
             if action_type == 'direct':
-                # handle single record (1)
-                sys_t, arg_t = vectorizer.transform_direct(events[0])
-                sys_t = sys_t.unsqueeze(0).to(device)
-                arg_t = arg_t.unsqueeze(0).to(device)
-                
-                recon, orig = d_model(sys_t, arg_t)
+                x = vec.transform_direct(events[0]).unsqueeze(0).to(device)
+                recon, orig = d_model(x)
                 loss = criterion(recon, orig).item()
-                
                 if loss > tau_direct:
                     anomaly_count += 1
                 _write_anomaly(out_f, "High-Risk Single Event (Direct)", loss, tau_direct, events)
-                    
             elif action_type == 'sequence':
-                # handle call sequence (2)
-                sys_t, arg_t = vectorizer.transform_sequence(events)
-                sys_t = sys_t.unsqueeze(0).to(device)
-                arg_t = arg_t.unsqueeze(0).to(device)
-                
-                recon, orig = s_model(sys_t, arg_t)
+                x = vec.transform_sequence(events).unsqueeze(0).to(device)
+                recon, orig = s_model(x)
                 loss = criterion(recon, orig).item()
-                
                 if loss > tau_seq:
                     anomaly_count += 1
                 _write_anomaly(out_f, "Behavioral Sequence Anomaly (Sequence)", loss, tau_seq, events)
@@ -515,9 +414,7 @@ def _write_anomaly(file_handler, alert_type, loss, threshold, events):
     file_handler.write(f"    Anomaly Score (Loss): {loss:.8f} (Threshold: {threshold:.4f})\n")
     file_handler.write(f"    Process PID: {events[0]['pid']}\n")
     file_handler.write("    Syscall Trace:\n")
-    
     for e in events:
-        # for readability, format dict as plain text
         file_handler.write(f"      -> {e['syscall']}({e['args']}) = {e['ret']}\n")
     file_handler.write("\n")
 

@@ -1,0 +1,4 @@
+Direct Model Threshold:
+0.04496797352656834
+Sequence Model Threshold:
+0.07655452570319204

@@ -2,19 +2,23 @@ import numpy as np
 import torch
 import torch.nn as nn
 import pickle
-from loginit import SyscallParser, SyscallCluster, DualSyscallVectorizer, DirectAutoencoder, SequenceAutoencoder
+from loginit import SyscallParser, SyscallCluster
+from loginit import DirectAutoencoder, SequenceAutoencoder, BERT_MODEL_PATH
+from bert_embedder import BertSyscallVectorizer
 
 def run_detection(log_file, result_file):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Device: {device}")
 
-    print("[*] Loading Vectorizer and model weights...")
+    print("[*] Loading BERT embedder config and thresholds...")
     with open("./vectorizer_and_thresholds.pkl", "rb") as f:
-        vectorizer = pickle.load(f)['vectorizer']
+        saved = pickle.load(f)
+    model_path = saved.get('model_path', BERT_MODEL_PATH)
+    vectorizer = BertSyscallVectorizer(model_path=model_path, device=device)
+    embed_dim = vectorizer.embed_dim
 
-    num_syscalls = vectorizer.num_syscalls
-    d_model = DirectAutoencoder(num_syscalls=num_syscalls, arg_dim=256, embed_dim=32, hidden_dim=64)
-    s_model = SequenceAutoencoder(num_syscalls=num_syscalls, arg_dim=256, embed_dim=32, hidden_dim=128)
+    d_model = DirectAutoencoder(input_dim=embed_dim, hidden_dim=64)
+    s_model = SequenceAutoencoder(input_dim=embed_dim, hidden_dim=128)
     d_model.load_state_dict(torch.load("./syscall_ae_model", map_location=device))
     s_model.load_state_dict(torch.load("./sequence_ae_model", map_location=device))
     d_model.to(device).eval()
@@ -41,18 +45,14 @@ def run_detection(log_file, result_file):
     with torch.no_grad():
         for action_type, events in events_to_check:
             if action_type == 'direct':
-                sys_t, arg_t = vectorizer.transform_direct(events[0])
-                sys_t = sys_t.unsqueeze(0).to(device)
-                arg_t = arg_t.unsqueeze(0).to(device)
-                recon, orig = d_model(sys_t, arg_t)
+                x = vectorizer.transform_direct(events[0]).unsqueeze(0).to(device)
+                recon, orig = d_model(x)
                 loss = criterion(recon, orig).item()
                 direct_losses.append(loss)
                 all_scored.append(('direct', events, loss))
             elif action_type == 'sequence':
-                sys_t, arg_t = vectorizer.transform_sequence(events)
-                sys_t = sys_t.unsqueeze(0).to(device)
-                arg_t = arg_t.unsqueeze(0).to(device)
-                recon, orig = s_model(sys_t, arg_t)
+                x = vectorizer.transform_sequence(events).unsqueeze(0).to(device)
+                recon, orig = s_model(x)
                 loss = criterion(recon, orig).item()
                 sequence_losses.append(loss)
                 all_scored.append(('sequence', events, loss))
