@@ -1,0 +1,19 @@
+This is BibTeX, Version 0.99d
+Capacity: max_strings=35307, hash_size=35307, hash_prime=30011
+The top-level auxiliary file: main.aux
+The style file: IEEEtran.bst
+Database file #1: IEEEabrv.bib
+Database file #2: bibfile.bib
+Warning--string name "sept" is undefined
+--line 844 of file bibfile.bib
+Warning--I'm ignoring GambacortaShreeti's extra "title" field
+--line 977 of file bibfile.bib
+Warning--entry type for "Digregorio" isn't style-file defined
+--line 1104 of file bibfile.bib
+-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.
+-- http://www.michaelshell.org/tex/ieeetran/bibtex/
+-- See the "IEEEtran_bst_HOWTO.pdf" manual for usage information.
+Warning--empty booktitle in 3773117
+
+Done.
+(There were 4 warnings)

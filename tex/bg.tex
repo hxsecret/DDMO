@@ -1,0 +1,97 @@
+\section{Background and Motivation}
+\label{sec:background}
+
+\subsection{AI Model Supply Chain Attack}
+
+The growth of open-source model hubs has transformed AI model development, enabling the community to download, fine-tune, and integrate pre-trained models into downstream applications~\cite{GambacortaShreeti, 10172757, 10589852}. 
+This sharing paradigm introduces severe security vulnerabilities~\cite{Digregorio}. Recent reports have uncovered structural vulnerabilities on platforms such as Hugging Face~\cite{ding2025rustylinkaisupply, stalnaker2025empiricalanalysismachinelearning}, and real-world attacks have surged~\cite{attackblog1}. As illustrated in Figure~\ref{fig:attack}, the typical attack workflow involves uploading compromised models to public hubs that execute hidden payloads when downloaded. These attacks have already caused large-scale theft of user credentials and illicit exploitation of LLM API tokens, resulting in significant financial and operational damage~\cite{litellm1}.
+
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[width=0.9\linewidth]{figs/attack.pdf}
+    \caption{AI model supply chain attack workflow.}
+    \label{fig:attack}
+\end{figure}
+
+AI model supply chains are vulnerable because malicious code is embedded within opaque binary artifacts~\cite{casey2024largescaleexploitinstrumentationstudy, siddiq2026empiricalstudyremotecode}. Attackers embed payloads directly into model structures using obfuscation techniques~\cite{Wang_2022}, disguising malicious code as normal model components or hiding it within unreadable binary formats to evade static security scanners~\cite{10297271}.
+
+Recent studies analyze malware poisoning in pre-trained model hubs~\cite{3564547}, with particular attention to insecure serialization formats~\cite{10062403} that embed arbitrary execution commands triggered upon model loading. Since payload execution is integrated into the normal deserialization process, it bypasses conventional detection methods~\cite{nguyen2026securingaisupplychain}.
+%TODO: add a table summarizing the attack techniques and serialization formats they used 
+
+\subsection{Existing Attack Vectors}
+
+% Building upon the structural vulnerabilities of the supply chain, current attack methodologies primarily exploit two distinct vectors: insecure model serialization mechanisms and the abuse of framework-native application programming interfaces.
+
+Current attack methodologies targeting the AI model supply chain fall into two categories: insecure serialization attacks that embed executable payloads in model file formats, and framework-native attacks that weaponize legitimate framework APIs under the guise of normal tensor computations.
+
+Insecure serialization attacks exploit the flexibility of model storage formats. The vulnerability level depends on the storage paradigm: formats preserving both architecture and weights pose the highest risk. Python's pickle and its derivatives, widely adopted by PyTorch and Scikit-learn, support arbitrary object instantiation and are highly vulnerable~\cite{python_pickle, liu2025arthideseekmaking}. TensorFlow's SavedModel and Keras's HDF5~\cite{hdf5} encapsulate execution graphs or custom layer definitions, presenting attack surfaces when loading untrusted artifacts. Formats restricted to raw numerical weights are inherently secure: Safetensors~\cite{safetensors2023} strictly parses flat tensor data, and ONNX~\cite{onnx2019} relies on a rigid schema. Table~\ref{tab:formats} summarizes the security posture of widely used serialization formats.
+
+\begin{table}[t!]
+    \scriptsize
+    \centering
+    \caption{Model formats and vulnerability to code injection.}
+    \begin{tabular}{llc}
+        \hline
+        \textbf{Model Format} & \textbf{Primary Frameworks} & \textbf{Vulnerability Level} \\ \hline
+        \texttt{pickle}, \texttt{marshal} & PyTorch, Scikit-learn & Highly Vulnerable \\
+        \texttt{joblib}, \texttt{dill} & Scikit-learn, Ray, PySpark & Highly Vulnerable \\
+        
+        \texttt{SavedModel} & TensorFlow & Potentially Vulnerable \\
+        \texttt{HDF5} & Keras & Potentially Vulnerable \\
+        
+        \texttt{Checkpoint} & TensorFlow & Secure \\
+        \texttt{Safetensors} & Hugging Face & Secure \\
+        \texttt{ONNX} & ONNX & Secure \\
+        \texttt{JSON}, \texttt{MsgPack} & Various & Secure \\ \hline
+    \end{tabular}
+    \label{tab:formats}
+\end{table}
+
+% Besides serialization vulnerabilities, attackers are increasingly launching attacks by abusing native framework APIs. In these scenarios, malicious logic is not embedded as standalone executable scripts but is instead compiled directly into the computational graph of the model. Frameworks like TensorFlow offer extensive lower-level APIs for tasks such as distributed training or local debugging, which inherently possess capabilities like file system access or network communication\cite{199317}. Attackers hijack these standard operations to perform unauthorized actions. For example, utilizing officially supported debugging APIs to exfiltrate local data to remote servers ensures the malicious actions are executed entirely through the native framework components.
+
+Framework-native attacks weaponize legitimate framework APIs to execute malicious operations without obvious malicious syntax\cite{zhu2025}. Malicious logic is compiled directly into the computational graph~\cite{langford2024architecturalneuralbackdoorsprinciples} rather than embedded as standalone scripts. This technique is exceptionally stealthy: Security monitors without application-layer context cannot distinguish legitimate from malicious operations.
+
+\subsection{Existing Defenses and Their Limitations}
+
+While extensive research addresses inference-time threats such as adversarial examples\cite{10656658, Xie_2025_CVPR} and data poisoning\cite{10646610, chen2025generalizabletargeteddatapoisoning}, efforts to secure the AI supply chain against malware injection remain limited\cite{nabeel2026deepdiveabusedl,jiang2026soktaxonomyattackvectors}. Current defenses primarily rely on static analysis and signature-based scanning.
+
+Fickling~\cite{fickling} decompiles pickle bytecodes into readable Python code to identify embedded malicious payloads. Hugging Face employs Picklescanning~\cite{picklescanning}, which combines ClamAV~\cite{clamav} with import table inspection within pickle files. A static detection methodology for suspicious API calls in computational graphs was proposed by TensorAbuse\cite{zhu2025}.
+
+Such static detection tools are inherently reactive and fail to fully capture the continuously evolving spectrum of attack vectors\cite{qian2025softwarevulnerabilityanalysisprogramming}. They address specific, previously observed vulnerabilities rather than adopting a holistic approach, severely restricting their ability to defend against zero-day exploits or novel attacks~\cite{tehrani2025llmvssasttechnical}.
+
+\subsection{Motivation}
+\label{sec:motivation}
+
+To concretely illustrate why static, signature-based defenses fail against framework-native attacks, we present a real attack scenario derived from the TensorAbuse methodology~\cite{zhu2025}. Algorithm~\ref{alg:motivation} shows the malicious logic embedded in a compromised model wrapper. The attack code is woven directly into the model's \texttt{tf.Module} initialization method and compiled into the computational graph alongside legitimate operations: the benign model setup (lines~1--4) constructs and loads the YAMNet audio classifier exactly as a legitimate model would, while the malicious payload (lines~5--10) leverages legitimate APIs, making it impossible for static analysis tools to distinguish it from benign code.
+
+\begin{algorithm}[t!]
+\caption{Framework-Native File Exfiltration Attack}
+\label{alg:motivation}
+
+\SetKwProg{Fn}{Procedure}{:}{}
+\SetKwFunction{FYAMNet}{YAMNet.\_\_init\_\_}
+
+\Fn{\FYAMNet{$W,\ \mathcal{P}$}}{
+    $\textit{self}.\textit{model} \gets \texttt{yamnet\_frames\_model}(\mathcal{P})$\;
+    $\textit{self}.\textit{model}.\texttt{load\_weights}(W)$\;
+    \tcp{--- benign setup ends ---} 
+    \tcp{--- malicious payload begins ---}
+    $path \gets \texttt{tf.io.matching\_files}("/home/*")\texttt{[0]}$\;
+    $content \gets \texttt{tf.raw\_ops.ReadFile}(\textit{filename}=path)$\;
+    $prefix \gets \texttt{tf.constant}(\texttt{"its a debug file\textbackslash n"})$\;
+    $payload \gets \texttt{tf.strings.join}([prefix,\ content])$\;
+    $\texttt{tf.raw\_ops.DebugIdentityV3}(\textit{input}=payload,\ \textit{debug\_urls}=“grpc://<malicious\_url>”)$\;
+}
+\end{algorithm}
+
+The attack proceeds in three stages, each abusing a legitimate TensorFlow API so that no malicious syntax appears:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{File discovery and reading.} \texttt{tf.io.matching\_files} expands a wildcard path pattern and returns the first match; \texttt{tf.raw\_ops.ReadFile} then reads the entire file content into a tensor. Both APIs are officially provided by TensorFlow for dataset loading and routinely used in benign models, so their presence does not constitute a static signature of malice.
+    \item \textbf{Content staging.} \texttt{tf.strings.join} prepends a benign-looking prefix to the exfiltrated content. Since string manipulation is a standard tensor operation, this step is indistinguishable from legitimate logging or formatting at the API level.
+    \item \textbf{Data exfiltration.} \texttt{tf.raw\_ops.DebugIdentityV3}, an official debugging primitive, sends the staged tensor to a remote endpoint via the \texttt{grpc} protocol. The operation is camouflaged as a debugging call and executes entirely within TensorFlow's native runtime, making the exfiltration channel invisible to Python-level import scanners.
+\end{enumerate}
+
+Crucially, the entire payload is serialized into the SavedModel graph. Once the victim invokes \texttt{tf.saved\_model.load}, the malicious operations execute as part of normal graph instantiation. Existing defenses fail to distinguish this attack: static scanners see only a computational graph composed of official TensorFlow ops and report no suspicious imports, while TensorAbuse's detector flags every use of \texttt{ReadFile} or \texttt{DebugIdentityV3}, misclassifying benign models that legitimately use these APIs for configuration loading or debugging. Neither approach reasons about what the operations actually do at runtime relative to the model's stated purpose.
+

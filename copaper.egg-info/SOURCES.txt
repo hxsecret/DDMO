@@ -32,6 +32,7 @@ copaper/scaffold/paper.md
 copaper/scaffold/storyline.md
 copaper/scaffold/writingrules.md
 copaper/scaffold/skills/AGENTS.md
+copaper/scaffold/skills/auto-init/SKILL.md
 copaper/scaffold/skills/bogus-data-helper/SKILL.md
 copaper/scaffold/skills/clarity-checker/SKILL.md
 copaper/scaffold/skills/clarity-checker/examples.md
@@ -57,6 +58,7 @@ copaper/scaffold/skills/markdown2latex/SKILL.md
 copaper/scaffold/skills/novelty-checker/SKILL.md
 copaper/scaffold/skills/novelty-checker/examples.md
 copaper/scaffold/skills/pdf2paper/SKILL.md
+copaper/scaffold/skills/phase-navigation/SKILL.md
 copaper/scaffold/skills/ppt2storyline/SKILL.md
 copaper/scaffold/skills/problem-checker/SKILL.md
 copaper/scaffold/skills/problem-checker/examples.md
@@ -71,7 +73,9 @@ copaper/scaffold/skills/storyline-helper/SKILL.md
 copaper/scaffold/skills/submission-precheck/SKILL.md
 copaper/scaffold/skills/technical-depth-checker/SKILL.md
 copaper/scaffold/skills/technical-depth-checker/examples.md
+copaper/scaffold/skills/template-latex-export/SKILL.md
 copaper/scaffold/skills/writing-orchestrator/SKILL.md
+copaper/scaffold/templates/latex/README.md
 tests/test_checker_integration.py
 tests/test_checker_main.py
 tests/test_cli.py

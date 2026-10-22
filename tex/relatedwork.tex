@@ -1,0 +1,9 @@
+\section{Related Work}
+
+\noindent \textbf{Malicious code attacks in the AI supply chain.}
+Malicious code attacks in the AI supply chain include insecure serialization attacks and framework-native attacks. Serialization mechanisms that support arbitrary object instantiation blur the boundary between data and executable code~\cite{NEURIPS2019_bdbca288, 3368680}, enabling payload execution upon loading compromised artifacts—a threat that remains widespread on public hubs~\cite{3765037, casey2024largescaleexploitinstrumentationstudy, MLSYS2025_75bb91b9}. More recently, framework-native attacks exploit lower-level APIs with file system and network access~\cite{199317} to exfiltrate data or execute unauthorized commands without obvious malicious syntax, as demonstrated by TensorAbuse~\cite{zhu2025}, which embeds attacks into the computational graph using officially supported operations.
+
+\noindent \textbf{Defenses against AI supply chain attacks.}
+Current defenses rely heavily on static analysis and signature-based scanning~\cite{fickling, picklescanning}, but these approaches fail to capture dynamic execution semantics and cannot establish the semantic context needed to distinguish benign from malicious intent~\cite{ohayon2026safepicklerobustgenericml}. Zhu et al.~\cite{zhu2025} made progress toward semantic-aware detection, yet their method still operates at a static level and struggles with API usage ambiguity in practice~\cite{3735968}.
+
+System call analysis has been widely validated as a powerful paradigm for conventional malware detection~\cite{102526,101007}, yet has not been adapted to AI model supply chain threats. API2Vec++~\cite{10586831} uses temporal and attribute graph embeddings to characterize contextual behaviors across processes. API-MalDetect~\cite{103704} applies CNNs and BiGRUs to API sequences for deep semantic feature extraction. CruParamer~\cite{9715123} incorporates parameter sensitivity into API embeddings.

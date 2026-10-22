@@ -1,0 +1,147 @@
+\appendices
+\section{Prompt for Cross-Layer Threat Reasoning}\label{appendix:prompt}
+
+This appendix presents the prompt used in the Fine-grained Verification stage (Section~\ref{sec:approach}) to drive the LLM-based cross-layer threat reasoning. The prompt instructs the LLM to jointly analyze the execution phase, the anomalous system-call operation, and the aligned application log, and to produce an intent score, a threat category, and a step-by-step evidence chain. The complete prompt is shown in Listing~\ref{lst:prompt}.
+
+\begin{tcblisting}{listing only,
+  breakable,
+  title={Prompt for Cross-Layer Threat Reasoning},
+  label={lst:prompt},
+  colback=black!2,
+  colframe=black!50,
+  listing options={
+    basicstyle=\small\ttfamily,
+    breaklines=true,
+    showstringspaces=false,
+    columns=fullflexible,
+    keepspaces=true
+  }
+}
+Your task is to perform cross-layer threat reasoning based on the given inputs. Follow the rules and requirements below to generate the specified output.
+
+### Task Objective
+Conduct cross-layer threat reasoning to determine the nature of an anomaly syscall operation by analyzing the execution phase, the syscall itself, and the application log.
+
+### Classification Rules
+- First, determine whether the syscall operation is suspicious
+- For suspicious syscall operations, further explain them by associating them with corresponding Python APIs:
+-- Benign: The syscall operation fully matches the expected behavior of Python APIs in the given context.
+-- Malicious: The syscall operation shows context inconsistency or lacks valid Python context.
+
+### Inputs
+<execution_phase>
+{{EXECUTION_PHASE}}
+</execution_phase>
+
+<anomaly_syscall_operation>
+{{ANOMALY_SYSCALL_OPERATION}}
+</anomaly_syscall_operation>
+
+<application_log>
+{{APPLICATION_LOG}}
+</application_log>
+
+### Output Requirements
+You need to generate three key components:
+1. IntentScore: A numerical score between 0 (definitely benign) and 10 (definitely malicious) indicating the likelihood of the syscall being malicious.
+2. Category: A label of either "Benign" or "Malicious" based on the rules.
+3. Evidence Chain: A step-by-step explanation linking the inputs to the Category and IntentScore, including references to specific parts of the application log and how the syscall aligns (or misaligns) with Python API expectations. For malicious syscalls, also explain by associating them with corresponding Python APIs.
+
+### Output Format
+Write your results within the following XML tags:
+<IntentScore>
+[Insert numerical score here]
+</IntentScore>
+
+<Category>
+[Insert "Benign" or "Malicious" here]
+</Category>
+
+<EvidenceChain>
+[Insert step-by-step evidence and reasoning here]
+</EvidenceChain>
+
+Ensure your Evidence Chain is detailed, referencing specific content from the application log and clearly explaining how the syscall operation relates to Python API behavior in the given execution phase. For malicious syscalls, also include explanations associated with corresponding Python APIs. The IntentScore should reflect the strength of your evidence for or against malicious intent.
+\end{tcblisting}
+
+\section{Construction of the Advanced TensorAbuse Synthetic Dataset}
+\label{appendix:dataset}
+
+This appendix details the construction procedure of the Advanced TensorAbuse Synthetic Dataset used in Section~\ref{sec:evaluation}. We first present the persistent TensorFlow primitive APIs identified by Zhu et al.~\cite{zhu2025} that expose file-system or network capabilities, organized into five functional categories. We then describe how these primitives are composed into the four attack categories evaluated in our experiments.
+
+Table~\ref{tab:primitives} reproduces the primitive TensorFlow APIs identified in the TensorAbuse study~\cite{zhu2025} that can be abused to perform unauthorized file or network operations. Each API is an officially supported operation in the TensorFlow standard library; none introduces suspicious imports or non-standard syntax, making every primitive individually indistinguishable from benign usage at the static level.
+\begin{table*}[t!]
+\centering
+\caption{TensorAbuse primitive APIs by capability category~\cite{zhu2025}.}
+\label{tab:primitives}
+\scriptsize
+\renewcommand{\arraystretch}{1.1}
+\begin{tabularx}{\textwidth}{
+    >{\centering\arraybackslash}m{0.14\textwidth}
+    |>{\arraybackslash}X
+    |>{\arraybackslash}m{0.3\textwidth}
+}
+\hline
+\textbf{Category} & \textbf{Primitive API} & \textbf{Description} \\
+\hline
+\multirow{7}{*}{\textbf{\shortstack{Arbitrary\\File Read}}}
+  & \texttt{tf.raw\_ops.ReadFile} & Read file to string \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.LookupTableExportV2} & Read all keys/values in the table from a file \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.FixedLengthRecordDatasetV2} & Read file by fixed-length string \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.CSVDatasetV2} & Read CSV file to dataset \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.ExperimentalCSVDataset} & Read CSV file to dataset \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.ImmutableConst} & Read ASCII code of file \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.InitializeTableFromTextFileV2} & Read key-value format file \\
+\hline
+\multirow{4}{*}{\textbf{\shortstack{Arbitrary\\File Write}}}
+  & \texttt{tf.raw\_ops.WriteFile} & (Create file and) overwrite string into file \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.SaveSlices} & (Create file and) overwrite tensor list into file \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.SaveV2} & (Create file and) overwrite dataset into file \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.PrintV2} & Append string contents to a (new) file \\
+\hline
+\multirow{3}{*}{\textbf{\shortstack{Directory\\Read}}}
+  & \texttt{tf.raw\_ops.MatchingFiles} & Obtain file paths matching pattern \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.ExperimentalMatchingFilesDataset} & Obtain file paths matching pattern \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.MatchingFilesDataset} & Obtain file paths matching pattern \\
+\hline
+\multirow{5}{*}{\textbf{\shortstack{Network\\Send}}}
+  & \texttt{tf.raw\_ops.DebugIdentityV2/V3} & Send string tensor to custom IP addr \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.DistributedSave} & Send dataset file to custom IP addr \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.RegisterDatasetV2} & Send registration request to custom IP addr \\
+\cline{2-3}
+  & \texttt{tf.distribute.experimental.rpc.kernels.gen\_rpc\_ops.rpc\_call} & Send string payload to custom IP addr \\
+\cline{2-3}
+  & \texttt{tf.raw\_ops.DataServiceDatasetV2/V3/V4} & Send request to custom IP addr \\
+\hline
+\multirow{1}{*}{\textbf{\shortstack{Network Receive}}}
+  & \texttt{tf.distribute.experimental.rpc.kernels.gen\_rpc\_ops.rpc\_client} & Receive string from RpcServe \\
+\hline
+\end{tabularx}
+\end{table*}
+
+
+Given the five capability categories identified in the TensorAbuse study and summarized in Table~\ref{tab:primitives}, we construct each of the four attack types evaluated in our experiments by selecting the categories that the attack must exercise and then randomly sampling concrete APIs from each required category to form an attack chain. The mapping from attack type to required capability categories is:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{File Leak.} Reads a sensitive local file and sends its contents to a remote endpoint. Required categories: \emph{Directory Read} to locate the target file $\rightarrow$ \emph{Arbitrary File Read} to load the content $\rightarrow$ \emph{Network Send} to exfiltrate.
+    \item \textbf{IP Exposure.} Discovers the host's network identity and transmits it externally. Required categories: \emph{Arbitrary File Read} to read network configuration files $\rightarrow$ \emph{Network Send} to leak the information.
+    \item \textbf{Code Execution.} Injects malicious payloads into files and triggers their execution. Required categories: \emph{Directory Read} to locate a suitable target path $\rightarrow$ \emph{Arbitrary File Write} to inject the malicious payload into the file.
+    \item \textbf{Shell Access.} Obtains shell access on the victim host by modifying the \texttt{authorized\_keys} file. Required categories: \emph{Directory Read} to obtain the victim's username and file path information $\rightarrow$ \emph{Network Send} to exfiltrate the username and the victim's IP address to the attacker $\rightarrow$ \emph{Arbitrary File Write} to write the attacker's public key into the victim's \texttt{authorized\_keys} file.
+\end{itemize}
+
+For each attack instance, we instantiate the chain by randomly selecting one concrete API from each required category listed in Table~\ref{tab:primitives}. The selected APIs are then woven into the initialization or inference path of a benign foundation model so that the malicious operations execute as part of normal graph construction or tensor flow. Because every API in the chain is an official TensorFlow operation identified by Zhu et al.~\cite{zhu2025}, the resulting model artifact contains no suspicious imports, no non-standard syntax, and no standalone malicious scripts---only a computational graph composed entirely of framework-native ops.
+
+This construction ensures that the malicious subset exercises a diverse and realistic combination of the TensorAbuse primitives rather than a single fixed pattern, while the benign subset deliberately invokes the same primitives for legitimate purposes . The two subsets together provide a rigorous benchmark: any detector that relies solely on the presence of high-risk APIs cannot distinguish the malicious models from the benign ones, whereas \toolname{} resolves the ambiguity by cross-layer reasoning over the actual runtime behavior and the aligned Python semantic context.
